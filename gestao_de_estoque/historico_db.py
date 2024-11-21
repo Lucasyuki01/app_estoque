@@ -7,7 +7,7 @@ def criar_historico_banco():
     # Criar ou recriar a tabela de histórico com a nova estrutura
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS historico (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            produto_id INTEGER NOT NULL,
             acao TEXT NOT NULL,
             responsavel TEXT NOT NULL,
             produto TEXT NOT NULL,
@@ -20,6 +20,7 @@ def criar_historico_banco():
     conn.commit()
     conn.close()
     print("Banco de dados de histórico criado ou atualizado com sucesso.")
+
 
 if __name__ == '__main__':
     criar_historico_banco()

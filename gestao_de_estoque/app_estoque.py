@@ -2,9 +2,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import sqlite3
 from datetime import datetime
+from tkinter import simpledialog
 
 # Função para registrar ações no histórico
-def registrar_historico(acao, responsavel, produto, quantidade, novo_total):
+def registrar_historico(produto_id, acao, responsavel, produto, quantidade, novo_total):
     # Conecta ao banco de dados do histórico
     conn = sqlite3.connect('historico.db')
     cursor = conn.cursor()
@@ -12,9 +13,9 @@ def registrar_historico(acao, responsavel, produto, quantidade, novo_total):
     # Insere o registro no histórico
     data_acao = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     cursor.execute('''
-        INSERT INTO historico (acao, responsavel, produto, quantidade, novo_total, data)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (acao, responsavel, produto, quantidade, novo_total, data_acao))
+        INSERT INTO historico (produto_id, acao, responsavel, produto, quantidade, novo_total, data)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (produto_id, acao, responsavel, produto, quantidade, novo_total, data_acao))
 
     conn.commit()
     conn.close()
@@ -63,15 +64,16 @@ def abrir_estoque():
     # Retirada de produtos
     tk.Label(janela_estoque, text="Retirar Produto").pack()
 
+    # Menu suspenso para selecionar produtos
     conn = sqlite3.connect('estoque.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT nome FROM produtos")
-    produtos = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT id, nome FROM produtos")
+    produtos = {row[0]: row[1] for row in cursor.fetchall()}
     conn.close()
 
     produto_var = tk.StringVar()
-    menu_produtos = ttk.Combobox(janela_estoque, textvariable=produto_var, values=produtos)
-    menu_produtos.pack()
+    combo_produtos = ttk.Combobox(janela_estoque, textvariable=produto_var, values=[f"{key} - {value}" for key, value in produtos.items()])
+    combo_produtos.pack()
 
     tk.Label(janela_estoque, text="Quantidade a Retirar:").pack()
     entry_quantidade = tk.Entry(janela_estoque)
@@ -82,16 +84,24 @@ def abrir_estoque():
     entry_responsavel.pack()
 
     def retirar_produto():
-        nome = produto_var.get()
+        produto_selecionado = produto_var.get()
         quantidade = entry_quantidade.get()
         responsavel = entry_responsavel.get()
 
-        # Validações iniciais
-        if not (nome and quantidade and responsavel):
+        # Validação inicial
+        if not (produto_selecionado and quantidade and responsavel):
             messagebox.showerror("Erro", "Por favor, preencha todos os campos antes de continuar.")
             return
         if not quantidade.isdigit() or int(quantidade) <= 0:
             messagebox.showerror("Erro", "A quantidade deve ser um número maior que zero.")
+            return
+
+        # Extrair ID e nome do produto selecionado
+        try:
+            produto_id, produto_nome = produto_selecionado.split(" - ")
+            produto_id = int(produto_id)
+        except ValueError:
+            messagebox.showerror("Erro", "Selecione um produto válido.")
             return
 
         try:
@@ -99,15 +109,15 @@ def abrir_estoque():
             cursor = conn.cursor()
 
             # Verifica a quantidade atual no estoque
-            cursor.execute("SELECT quantidade FROM produtos WHERE nome = ?", (nome,))
+            cursor.execute("SELECT quantidade FROM produtos WHERE id = ?", (produto_id,))
             resultado = cursor.fetchone()
 
             if not resultado:
-                messagebox.showerror("Erro", f"O produto '{nome}' não existe no estoque.")
+                messagebox.showerror("Erro", f"O produto '{produto_nome}' não existe no estoque.")
                 return
 
             estoque_atual = resultado[0]
-            quantidade = int(quantidade)  # Certifica-se de que é um número inteiro
+            quantidade = int(quantidade)
 
             # Verifica se a quantidade solicitada pode ser retirada
             if quantidade > estoque_atual:
@@ -118,20 +128,18 @@ def abrir_estoque():
             novo_estoque = estoque_atual - quantidade
 
             # Atualiza o estoque no banco de dados
-            cursor.execute("UPDATE produtos SET quantidade = ? WHERE nome = ?", (novo_estoque, nome))
+            cursor.execute("UPDATE produtos SET quantidade = ? WHERE id = ?", (novo_estoque, produto_id))
 
-            # Registra no histórico
-            registrar_historico("Retirada", responsavel, nome, quantidade, novo_estoque)
+            # Registra no histórico com sinal de subtração
+            registrar_historico(produto_id, "Retirada", responsavel, produto_nome, -quantidade, novo_estoque)
 
             conn.commit()
-            messagebox.showinfo("Sucesso", f"{quantidade} unidades de '{nome}' retiradas do estoque por {responsavel}.")
+            messagebox.showinfo("Sucesso", f"{quantidade} unidades de '{produto_nome}' retiradas do estoque por {responsavel}.")
             buscar_produtos()  # Atualiza a tabela de produtos
         except sqlite3.Error as e:
             messagebox.showerror("Erro", f"Erro no banco de dados: {e}")
         finally:
             conn.close()
-
-
 
     tk.Button(janela_estoque, text="Retirar", command=retirar_produto).pack()
 
@@ -149,21 +157,28 @@ def cadastrar_novo_produto():
             messagebox.showerror("Erro", "Todos os campos são obrigatórios e devem ser preenchidos corretamente.")
             return
 
-        conn = sqlite3.connect('estoque.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO produtos (nome, quantidade, minimo, localizacao, estado, unidade_medida)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (nome, int(quantidade), int(minimo), localizacao, estado, "Unidade"))
-        conn.commit()
+        try:
+            conn = sqlite3.connect('estoque.db')
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO produtos (nome, quantidade, minimo, localizacao, estado, unidade_medida)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (nome, int(quantidade), int(minimo), localizacao, estado, "Unidade"))
+            conn.commit()
 
-        # O novo total, no caso de cadastro, é igual à quantidade inicial
-        novo_total = int(quantidade)
-        registrar_historico("Cadastro", responsavel, nome, novo_total, novo_total)
+            # Obter o ID do produto recém-criado
+            produto_id = cursor.lastrowid
 
-        conn.close()
-        messagebox.showinfo("Sucesso", f"Produto cadastrado com sucesso pelo responsável {responsavel}!")
-        janela_cadastrar.destroy()
+            # O novo total é igual à quantidade inicial
+            novo_total = int(quantidade)
+            registrar_historico(produto_id, "Cadastro", responsavel, nome, novo_total, novo_total)
+
+            messagebox.showinfo("Sucesso", f"Produto cadastrado com sucesso pelo responsável {responsavel}!")
+        except sqlite3.Error as e:
+            messagebox.showerror("Erro", f"Erro no banco de dados: {e}")
+        finally:
+            conn.close()
+            janela_cadastrar.destroy()
 
     janela_cadastrar = tk.Toplevel()
     janela_cadastrar.title("Cadastrar Novo Produto")
@@ -197,12 +212,12 @@ def cadastrar_novo_produto():
 # Função para adicionar quantidade a produto existente
 def adicionar_produto_existente():
     def salvar_quantidade():
-        produto_id = entry_id.get()
+        produto_id = combo_id.get()
         quantidade = entry_quantidade.get()
         responsavel = entry_responsavel.get()
 
         # Validações iniciais
-        if not (produto_id.isdigit() and quantidade.isdigit() and responsavel):
+        if not (produto_id and quantidade.isdigit() and responsavel):
             messagebox.showerror("Erro", "Todos os campos são obrigatórios e devem ser preenchidos corretamente.")
             return
 
@@ -219,7 +234,7 @@ def adicionar_produto_existente():
                 return
 
             nome, estoque_atual = produto
-            quantidade = int(quantidade)  # Certifica-se de que é um número inteiro
+            quantidade = int(quantidade)
 
             # Calcula o novo total no estoque
             novo_estoque = estoque_atual + quantidade
@@ -228,7 +243,7 @@ def adicionar_produto_existente():
             cursor.execute("UPDATE produtos SET quantidade = ? WHERE id = ?", (novo_estoque, int(produto_id)))
 
             # Registra no histórico
-            registrar_historico("Adição", responsavel, nome, quantidade, novo_estoque)
+            registrar_historico(int(produto_id), "Adição", responsavel, nome, quantidade, novo_estoque)
 
             conn.commit()
             messagebox.showinfo("Sucesso", f"Quantidade atualizada para o produto '{nome}' por {responsavel}. Novo estoque: {novo_estoque}.")
@@ -238,13 +253,21 @@ def adicionar_produto_existente():
             conn.close()
             janela_adicionar.destroy()
 
+    # Janela de Adição de Produtos
     janela_adicionar = tk.Toplevel()
     janela_adicionar.title("Adicionar Produto")
 
+    # Menu suspenso para IDs dos produtos
     tk.Label(janela_adicionar, text="ID do Produto").grid(row=0, column=0)
-    entry_id = tk.Entry(janela_adicionar)
-    entry_id.grid(row=0, column=1)
+    conn = sqlite3.connect('estoque.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM produtos")
+    ids = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    combo_id = ttk.Combobox(janela_adicionar, values=ids)
+    combo_id.grid(row=0, column=1)
 
+    # Campos restantes
     tk.Label(janela_adicionar, text="Quantidade a Adicionar").grid(row=1, column=0)
     entry_quantidade = tk.Entry(janela_adicionar)
     entry_quantidade.grid(row=1, column=1)
@@ -255,6 +278,7 @@ def adicionar_produto_existente():
 
     tk.Button(janela_adicionar, text="Salvar", command=salvar_quantidade).grid(row=3, column=0, columnspan=2, pady=10)
 
+# Função para histórico
 def abrir_historico():
     janela_historico = tk.Toplevel()
     janela_historico.title("Histórico de Ações")
@@ -262,10 +286,10 @@ def abrir_historico():
     # Tabela para exibir o histórico
     tree = ttk.Treeview(
         janela_historico,
-        columns=('ID', 'Ação', 'Responsável', 'Produto', 'Quantidade', 'Novo Total', 'Data'),
+        columns=('Produto ID', 'Ação', 'Responsável', 'Produto', 'Quantidade', 'Novo Total', 'Data'),
         show='headings'
     )
-    tree.heading('ID', text='ID')
+    tree.heading('Produto ID', text='ID do Produto')
     tree.heading('Ação', text='Ação')
     tree.heading('Responsável', text='Responsável')
     tree.heading('Produto', text='Produto')
@@ -274,20 +298,47 @@ def abrir_historico():
     tree.heading('Data', text='Data')
     tree.pack(fill='both', expand=True)
 
-    # Função para carregar o histórico do banco de dados
+    # Filtros
+    tk.Label(janela_historico, text="Filtrar por:").pack()
+    filtro_opcao = ttk.Combobox(janela_historico, values=["Nome do Produto", "Produto ID", "Responsável"])
+    filtro_opcao.pack()
+
+    tk.Label(janela_historico, text="Valor do Filtro").pack()
+    entry_filtro = tk.Entry(janela_historico)
+    entry_filtro.pack()
+
+    # Função para carregar o histórico do banco de dados com filtro
     def carregar_historico():
         tree.delete(*tree.get_children())  # Limpa a tabela antes de carregar novos dados
         conn = sqlite3.connect('historico.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM historico")
+
+        query = "SELECT * FROM historico"
+        parametros = []
+
+        # Aplica o filtro com base na escolha do usuário
+        if filtro_opcao.get() == "Nome do Produto" and entry_filtro.get():
+            query += " WHERE produto LIKE ?"
+            parametros.append('%' + entry_filtro.get() + '%')
+        elif filtro_opcao.get() == "Produto ID" and entry_filtro.get():
+            query += " WHERE produto_id = ?"
+            parametros.append(entry_filtro.get())
+        elif filtro_opcao.get() == "Responsável" and entry_filtro.get():
+            query += " WHERE responsavel LIKE ?"
+            parametros.append('%' + entry_filtro.get() + '%')
+
+        cursor.execute(query, parametros)
         for row in cursor.fetchall():
             tree.insert('', tk.END, values=row)
         conn.close()
 
-    carregar_historico()
+    tk.Button(janela_historico, text="Carregar Histórico", command=carregar_historico).pack(pady=10)
 
-    # Botão para recarregar o histórico
-    tk.Button(janela_historico, text="Recarregar", command=carregar_historico).pack(pady=10)
+    # Botão para recarregar o histórico sem filtro
+    tk.Button(janela_historico, text="Limpar Filtro", command=lambda: [entry_filtro.delete(0, tk.END), carregar_historico()]).pack(pady=10)
+
+    # Carrega o histórico inicialmente
+    carregar_historico()
 
 # Função para gerar um número único de solicitação
 def gerar_numero_solicitacao():
@@ -380,13 +431,14 @@ def acompanhar_pedidos(frame_principal):
     tree.pack(fill='both', expand=True)
 
     def carregar_pedidos():
-        tree.delete(*tree.get_children())
+        tree.delete(*tree.get_children())  # Limpa a tabela antes de carregar novos dados
         conn = sqlite3.connect('solicitacoes.db')
         cursor = conn.cursor()
 
         query = "SELECT * FROM solicitacoes"
         parametros = []
 
+        # Aplica os filtros, se houver
         if filtro_opcao.get() == "Responsável" and entry_filtro.get():
             query += " WHERE responsavel LIKE ?"
             parametros.append('%' + entry_filtro.get() + '%')
@@ -397,6 +449,7 @@ def acompanhar_pedidos(frame_principal):
         query += " ORDER BY data_solicitacao"
         cursor.execute(query, parametros)
 
+        # Preenche a tabela com os resultados
         for row in cursor.fetchall():
             tree.insert('', tk.END, values=row)
         conn.close()
@@ -405,8 +458,8 @@ def acompanhar_pedidos(frame_principal):
 
     # Atualizar status
     def atualizar_status():
-        senha = tk.simpledialog.askstring("Senha", "Digite a senha para alterar o status:")
-        if senha != "admin123":
+        senha = simpledialog.askstring("Senha", "Digite a senha para alterar o status:")
+        if senha != "admin123":  # Substitua pela senha desejada
             messagebox.showerror("Erro", "Senha incorreta!")
             return
 
@@ -416,22 +469,64 @@ def acompanhar_pedidos(frame_principal):
             return
 
         pedido = tree.item(item_selecionado, 'values')
-        novo_status = tk.simpledialog.askstring("Novo Status", "Digite o novo status (Solicitado, Recusado, Em análise, Comprado, Recebido):")
 
-        if novo_status not in ["Solicitado", "Recusado", "Em análise", "Comprado", "Recebido"]:
-            messagebox.showerror("Erro", "Status inválido!")
-            return
+        # Janela para atualizar o status
+        janela_status = tk.Toplevel()
+        janela_status.title("Atualizar Status")
+        janela_status.geometry("300x150")
 
-        conn = sqlite3.connect('solicitacoes.db')
-        cursor = conn.cursor()
-        cursor.execute("UPDATE solicitacoes SET status = ? WHERE id = ?", (novo_status, pedido[0]))
-        conn.commit()
-        conn.close()
-        messagebox.showinfo("Sucesso", "Status atualizado com sucesso!")
-        carregar_pedidos()
+        tk.Label(janela_status, text="Selecione o novo status:").pack(pady=10)
+
+        # Opções de status
+        status_var = tk.StringVar()
+        combo_status = ttk.Combobox(
+            janela_status,
+            textvariable=status_var,
+            values=["Solicitado", "Recusado", "Em análise", "Comprado", "Recebido"]
+        )
+        combo_status.pack(pady=10)
+
+        def salvar_status():
+            novo_status = combo_status.get()
+            if novo_status not in ["Solicitado", "Recusado", "Em análise", "Comprado", "Recebido"]:
+                messagebox.showerror("Erro", "Status inválido! Por favor, selecione um status válido.")
+                return
+
+            try:
+                conn = sqlite3.connect('solicitacoes.db')
+                cursor = conn.cursor()
+
+                # Atualiza o banco de dados
+                cursor.execute("UPDATE solicitacoes SET status = ? WHERE numero_solicitacao = ?", (novo_status, pedido[7]))
+                conn.commit()
+
+                # Atualiza a tabela exibida
+                carregar_pedidos()  # Recarrega todos os pedidos para refletir a alteração
+                messagebox.showinfo("Sucesso", "Status atualizado com sucesso!")
+                janela_status.destroy()
+            except sqlite3.Error as e:
+                messagebox.showerror("Erro", f"Erro no banco de dados: {e}")
+            finally:
+                conn.close()
+
+        def mostrar_status(event):
+            # Obtém o item selecionado na tabela
+            item_selecionado = tree.selection()
+            if not item_selecionado:
+                messagebox.showerror("Erro", "Nenhum pedido selecionado!")
+                return
+
+            # Obtém os valores do item selecionado
+            pedido = tree.item(item_selecionado, 'values')
+            numero_solicitacao = pedido[7]  # Número da solicitação
+            status_atual = pedido[6]        # Status atual (posição na tabela pode variar)
+
+            # Exibe o status em um pop-up
+            messagebox.showinfo("Status do Pedido", f"Número da Solicitação: {numero_solicitacao}\nStatus Atual: {status_atual}")
+
+        tk.Button(janela_status, text="Salvar", command=salvar_status).pack(pady=10)
 
     tk.Button(frame_principal, text="Atualizar Status", command=atualizar_status).pack(pady=10)
-
 
 # Menu Principal
 def main():
