@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 
 # Função para registrar ações no histórico
-def registrar_historico(acao, responsavel, produto, quantidade):
+def registrar_historico(acao, responsavel, produto, quantidade, novo_total):
     # Conecta ao banco de dados do histórico
     conn = sqlite3.connect('historico.db')
     cursor = conn.cursor()
@@ -12,9 +12,9 @@ def registrar_historico(acao, responsavel, produto, quantidade):
     # Insere o registro no histórico
     data_acao = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     cursor.execute('''
-        INSERT INTO historico (acao, responsavel, produto, quantidade, data)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (acao, responsavel, produto, quantidade, data_acao))
+        INSERT INTO historico (acao, responsavel, produto, quantidade, novo_total, data)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (acao, responsavel, produto, quantidade, novo_total, data_acao))
 
     conn.commit()
     conn.close()
@@ -86,6 +86,7 @@ def abrir_estoque():
         quantidade = entry_quantidade.get()
         responsavel = entry_responsavel.get()
 
+        # Validações iniciais
         if not (nome and quantidade and responsavel):
             messagebox.showerror("Erro", "Por favor, preencha todos os campos antes de continuar.")
             return
@@ -93,25 +94,44 @@ def abrir_estoque():
             messagebox.showerror("Erro", "A quantidade deve ser um número maior que zero.")
             return
 
-        conn = sqlite3.connect('estoque.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT quantidade FROM produtos WHERE nome = ?", (nome,))
-        resultado = cursor.fetchone()
+        try:
+            conn = sqlite3.connect('estoque.db')
+            cursor = conn.cursor()
 
-        if not resultado:
-            messagebox.showerror("Erro", f"O produto '{nome}' não existe no estoque.")
-        else:
+            # Verifica a quantidade atual no estoque
+            cursor.execute("SELECT quantidade FROM produtos WHERE nome = ?", (nome,))
+            resultado = cursor.fetchone()
+
+            if not resultado:
+                messagebox.showerror("Erro", f"O produto '{nome}' não existe no estoque.")
+                return
+
             estoque_atual = resultado[0]
-            if int(quantidade) > estoque_atual:
+            quantidade = int(quantidade)  # Certifica-se de que é um número inteiro
+
+            # Verifica se a quantidade solicitada pode ser retirada
+            if quantidade > estoque_atual:
                 messagebox.showerror("Erro", "A quantidade solicitada excede o estoque disponível.")
-            else:
-                novo_estoque = estoque_atual - int(quantidade)
-                cursor.execute("UPDATE produtos SET quantidade = ? WHERE nome = ?", (novo_estoque, nome))
-                conn.commit()
-                registrar_historico("Retirada", responsavel, nome, int(quantidade))
-                messagebox.showinfo("Sucesso", f"{quantidade} unidades de '{nome}' retiradas do estoque por {responsavel}.")
-                buscar_produtos()
-        conn.close()
+                return
+
+            # Calcula o novo total no estoque
+            novo_estoque = estoque_atual - quantidade
+
+            # Atualiza o estoque no banco de dados
+            cursor.execute("UPDATE produtos SET quantidade = ? WHERE nome = ?", (novo_estoque, nome))
+
+            # Registra no histórico
+            registrar_historico("Retirada", responsavel, nome, quantidade, novo_estoque)
+
+            conn.commit()
+            messagebox.showinfo("Sucesso", f"{quantidade} unidades de '{nome}' retiradas do estoque por {responsavel}.")
+            buscar_produtos()  # Atualiza a tabela de produtos
+        except sqlite3.Error as e:
+            messagebox.showerror("Erro", f"Erro no banco de dados: {e}")
+        finally:
+            conn.close()
+
+
 
     tk.Button(janela_estoque, text="Retirar", command=retirar_produto).pack()
 
@@ -136,7 +156,11 @@ def cadastrar_novo_produto():
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (nome, int(quantidade), int(minimo), localizacao, estado, "Unidade"))
         conn.commit()
-        registrar_historico("Cadastro", responsavel, nome, int(quantidade))
+
+        # O novo total, no caso de cadastro, é igual à quantidade inicial
+        novo_total = int(quantidade)
+        registrar_historico("Cadastro", responsavel, nome, novo_total, novo_total)
+
         conn.close()
         messagebox.showinfo("Sucesso", f"Produto cadastrado com sucesso pelo responsável {responsavel}!")
         janela_cadastrar.destroy()
@@ -177,26 +201,42 @@ def adicionar_produto_existente():
         quantidade = entry_quantidade.get()
         responsavel = entry_responsavel.get()
 
+        # Validações iniciais
         if not (produto_id.isdigit() and quantidade.isdigit() and responsavel):
             messagebox.showerror("Erro", "Todos os campos são obrigatórios e devem ser preenchidos corretamente.")
             return
 
-        conn = sqlite3.connect('estoque.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT nome, quantidade FROM produtos WHERE id = ?", (int(produto_id),))
-        produto = cursor.fetchone()
+        try:
+            conn = sqlite3.connect('estoque.db')
+            cursor = conn.cursor()
 
-        if not produto:
-            messagebox.showerror("Erro", f"Produto com ID {produto_id} não encontrado.")
-        else:
+            # Verifica se o produto existe
+            cursor.execute("SELECT nome, quantidade FROM produtos WHERE id = ?", (int(produto_id),))
+            produto = cursor.fetchone()
+
+            if not produto:
+                messagebox.showerror("Erro", f"Produto com ID {produto_id} não encontrado.")
+                return
+
             nome, estoque_atual = produto
-            novo_estoque = estoque_atual + int(quantidade)
+            quantidade = int(quantidade)  # Certifica-se de que é um número inteiro
+
+            # Calcula o novo total no estoque
+            novo_estoque = estoque_atual + quantidade
+
+            # Atualiza o estoque no banco de dados
             cursor.execute("UPDATE produtos SET quantidade = ? WHERE id = ?", (novo_estoque, int(produto_id)))
+
+            # Registra no histórico
+            registrar_historico("Adição", responsavel, nome, quantidade, novo_estoque)
+
             conn.commit()
-            registrar_historico("Adição", responsavel, nome, int(quantidade))
             messagebox.showinfo("Sucesso", f"Quantidade atualizada para o produto '{nome}' por {responsavel}. Novo estoque: {novo_estoque}.")
-        conn.close()
-        janela_adicionar.destroy()
+        except sqlite3.Error as e:
+            messagebox.showerror("Erro", f"Erro no banco de dados: {e}")
+        finally:
+            conn.close()
+            janela_adicionar.destroy()
 
     janela_adicionar = tk.Toplevel()
     janela_adicionar.title("Adicionar Produto")
@@ -222,7 +262,7 @@ def abrir_historico():
     # Tabela para exibir o histórico
     tree = ttk.Treeview(
         janela_historico,
-        columns=('ID', 'Ação', 'Responsável', 'Produto', 'Quantidade', 'Data'),
+        columns=('ID', 'Ação', 'Responsável', 'Produto', 'Quantidade', 'Novo Total', 'Data'),
         show='headings'
     )
     tree.heading('ID', text='ID')
@@ -230,6 +270,7 @@ def abrir_historico():
     tree.heading('Responsável', text='Responsável')
     tree.heading('Produto', text='Produto')
     tree.heading('Quantidade', text='Quantidade')
+    tree.heading('Novo Total', text='Novo Total')
     tree.heading('Data', text='Data')
     tree.pack(fill='both', expand=True)
 
