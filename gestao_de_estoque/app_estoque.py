@@ -59,6 +59,29 @@ def main_menu(frame_principal):
         bg="light gray"  # Adiciona a cor de fundo ao rodapé
     ).grid(row=8, column=1, pady=20)
 
+def inicializar_banco_de_dados():
+    """
+    Verifica se o banco de dados e as tabelas necessárias existem.
+    Se não existirem, cria-as.
+    """
+    conn = sqlite3.connect('estoque.db')
+    cursor = conn.cursor()
+
+    # Criação da tabela produtos, se não existir
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS produtos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            quantidade INTEGER NOT NULL,
+            minimo INTEGER NOT NULL,
+            localizacao TEXT NOT NULL,
+            estado TEXT NOT NULL,
+            unidade_medida TEXT NOT NULL
+        )
+    ''')
+
+    conn.commit()
+    conn.close()
 
 # Função para abrir estoque
 def abrir_estoque(frame_principal):
@@ -727,6 +750,7 @@ def verificar_estoque_minimo():
 
 # Função principal
 def main():
+    inicializar_banco_de_dados()  # Garante que o banco de dados está configurado
     root = tk.Tk()
     root.title("Gestão de Estoque e Solicitações")
     root.geometry("1200x800")
