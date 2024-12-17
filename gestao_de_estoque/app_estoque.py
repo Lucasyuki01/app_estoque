@@ -133,9 +133,21 @@ def abrir_estoque(frame_principal):
     # Retirada de produtos
     tk.Label(frame_principal, text="Retirar Produto", font=("Arial", 12)).pack(pady=10)
 
-    tk.Label(frame_principal, text="ID do Produto:").pack()
-    entry_id = tk.Entry(frame_principal, width=30)
-    entry_id.pack()
+    # Menu suspenso para selecionar o produto (ID - Nome)
+    tk.Label(frame_principal, text="Selecione o Produto:").pack()
+    produto_var = tk.StringVar()  # Variável para armazenar a seleção
+    combo_produto = ttk.Combobox(frame_principal, textvariable=produto_var, width=30)
+    combo_produto.pack()
+
+    def carregar_produtos_no_combo():
+        conn = sqlite3.connect('estoque.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nome FROM produtos")
+        produtos = [f"{row[0]} - {row[1]}" for row in cursor.fetchall()]
+        conn.close()
+        combo_produto['values'] = produtos  # Define os valores do menu suspenso
+
+    carregar_produtos_no_combo()
 
     tk.Label(frame_principal, text="Quantidade a Retirar:").pack()
     entry_quantidade = tk.Entry(frame_principal, width=30)
@@ -146,25 +158,32 @@ def abrir_estoque(frame_principal):
     entry_responsavel.pack()
 
     def retirar_produto():
-        produto_id = entry_id.get()
+        produto_selecionado = produto_var.get()
         quantidade = entry_quantidade.get()
         responsavel = entry_responsavel.get()
 
-        if not (produto_id.isdigit() and quantidade.isdigit() and responsavel):
+        if not (produto_selecionado and quantidade.isdigit() and responsavel):
             messagebox.showerror("Erro", "Preencha todos os campos corretamente!")
+            return
+
+        try:
+            produto_id, produto_nome = produto_selecionado.split(" - ")
+            produto_id = int(produto_id)
+        except ValueError:
+            messagebox.showerror("Erro", "Selecione um produto válido!")
             return
 
         conn = sqlite3.connect('estoque.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT nome, quantidade FROM produtos WHERE id = ?", (int(produto_id),))
-        produto = cursor.fetchone()
+        cursor.execute("SELECT quantidade FROM produtos WHERE id = ?", (produto_id,))
+        resultado = cursor.fetchone()
 
-        if not produto:
+        if not resultado:
             messagebox.showerror("Erro", "Produto não encontrado!")
             conn.close()
             return
 
-        nome, estoque_atual = produto
+        estoque_atual = resultado[0]
         quantidade = int(quantidade)
 
         if quantidade > estoque_atual:
@@ -173,14 +192,14 @@ def abrir_estoque(frame_principal):
             return
 
         novo_estoque = estoque_atual - quantidade
-        cursor.execute("UPDATE produtos SET quantidade = ? WHERE id = ?", (novo_estoque, int(produto_id)))
+        cursor.execute("UPDATE produtos SET quantidade = ? WHERE id = ?", (novo_estoque, produto_id))
         conn.commit()
 
-        registrar_historico(int(produto_id), "Retirada", responsavel, nome, -quantidade, novo_estoque)
+        registrar_historico(produto_id, "Retirada", responsavel, produto_nome, -quantidade, novo_estoque)
         conn.close()
 
-        messagebox.showinfo("Sucesso", f"Retirada de {quantidade} unidades de '{nome}' realizada!")
-        buscar_produtos()
+        messagebox.showinfo("Sucesso", f"Retirada de {quantidade} unidades de '{produto_nome}' realizada!")
+        buscar_produtos()  # Atualiza a tabela de resultados
 
     tk.Button(frame_principal, text="Retirar", command=retirar_produto, width=30, height=2).pack(pady=10)
 
